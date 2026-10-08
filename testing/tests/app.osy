@@ -1,0 +1,7 @@
+// The producer's test project for Osysharp.Memory.Testing — a gardener's field notes, searched by what they say.
+app MemoryTestingKitTests {
+  model "model/**/*.osy";
+  tests "**/*.test.osy";
+  use Osysharp.Memory;
+  use Osysharp.Memory.Testing@0;
+}

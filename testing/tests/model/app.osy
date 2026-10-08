@@ -1,0 +1,36 @@
+using Osysharp.Memory;
+
+/// Who keeps the notes — a gardener reads their own, and the shared ones.
+[Principal]
+entity Gardener {
+  [Required, Unique, MaxLength(200)] string Email;
+  security { allow read when IsAuthenticated; }
+}
+
+/// One field note, found by what it says.
+entity FieldNote {
+  [Required, MaxLength(120)] string Title;
+  [Searchable(Memory), MaxLength(4000)] string Body;
+  /// Null: every gardener reads it. Set: only its keeper does.
+  Gardener? Keeper;
+  security {
+    allow read where Keeper == null || Keeper == user;
+    allow create when IsAuthenticated;
+  }
+}
+
+/// One note a search found.
+public class NoteHit {
+  public string Title = "";
+  public decimal Score;
+}
+
+/// Notes about `words`, the closest first — only what the caller may read is ever found.
+public List<NoteHit> FindNotes(string words) {
+  List<NoteHit> found = [];
+  foreach (var hit in Memory.Search(words, of: [FieldNote], limit: 10)) {
+    var note = FieldNote.FirstOrDefault(n => n.Id == hit.SourceEntityId);
+    if (note != null && !found.Any(f => f.Title == note.Title)) { found.Add(new NoteHit { Title = note.Title, Score = hit.Score }); }
+  }
+  return found;
+}

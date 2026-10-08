@@ -1,0 +1,18 @@
+// Osysharp.Memory.Testing — a deterministic embedder for tests, so a suite can assert what `Memory.Search` and
+// `[Searchable(Memory)]` find without calling a model.
+//
+//     [TestFixture] void World() { TestEmbedder.Use(new WordsEmbedder()); … }
+//
+// `WordsEmbedder` turns a text into a hashed bag of its words: two texts are as close as the words they share. That is
+// lexical, not semantic — "invoice" is not near "bill" — so a test written against it searches with words its rows
+// contain, and asserts WHICH rows are found and which never are (a note a customer cannot read, an article only the
+// team may). It is free, offline and the same on every machine, and a test run is the only place it is ever used: the
+// platform takes `TestEmbedder.Use` only in a [Test] or [TestFixture], on a test run.
+package Osysharp.Memory.Testing {
+  version     "0.1.0";
+  minPlatform "0.9.0";
+  summary     "a deterministic, offline embedder for tests — a hashed bag of words — so a suite can assert what Memory.Search and [Searchable(Memory)] find without a model.";
+  model "model/*.osy";
+  use Osysharp.Memory;
+  tests "tests";
+}

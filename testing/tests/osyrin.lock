@@ -1,0 +1,26 @@
+{
+  "platform": {
+    "version": "0.9.0"
+  },
+  "entries": [
+    {
+      "name": "Osysharp.Memory",
+      "kind": "package",
+      "version": "1.0.0",
+      "hash": "sha256:51d3b9a3921ce28952245f6fff3fcb9d4c12dee368cb1b9eedc57c5de2e4825f",
+      "minPlatform": "0.9.0",
+      "shadow": "app-forkable",
+      "source": "workspace:Platform.Core/Dsl/OsySharp/Baseline/Capabilities/Memory"
+    },
+    {
+      "name": "Osysharp.Memory.Testing",
+      "kind": "package",
+      "version": "0.1.0",
+      "hash": "sha256:c029d9f31848383be2620177bc18b2c1c93b18ee37309e7453cb5822a2b6319d",
+      "minPlatform": "0.9.0",
+      "shadow": "app-forkable",
+      "source": "workspace:kits/memory-testing",
+      "constraint": "0"
+    }
+  ]
+}

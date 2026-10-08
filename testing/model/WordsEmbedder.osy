@@ -1,0 +1,60 @@
+namespace Osysharp.Memory.Testing;
+
+using Osysharp.Memory;
+
+/// A hashed bag of words: each word of a text adds one to a slot chosen by its spelling, and the vector is scaled to
+/// length one — so two texts are as close as the words they share, and a text is closest to itself.
+///
+/// Words are runs of letters and digits, compared without case; words shorter than `MinLength` and the words in
+/// `Ignore` are left out, so "the" and "a" do not make two unrelated sentences look alike. Every machine answers the
+/// same vector for the same text.
+public class WordsEmbedder : IEmbedder {
+  /// The shortest word that counts.
+  public int MinLength = 2;
+  /// Words that count for nothing — the commonest words of English, by default.
+  public List<string> Ignore = ["the", "and", "or", "of", "to", "in", "on", "at", "for", "a", "an", "is", "it", "my",
+                                "i", "we", "you", "this", "that", "with", "be", "was", "are", "has", "have"];
+
+  public string Model() { return "osysharp-words"; }
+
+  /// `text` as a vector of `dimensions` slots — as many as the app's memory stores. More slots, fewer words sharing one
+  /// by chance.
+  public List<double> Embed(string text, int dimensions) {
+    List<double> vector = [];
+    for (var i = 0; i < dimensions; i++) { vector.Add(0.0); }
+    foreach (var word in WordsOf(text)) {
+      var slot = SlotOf(word, dimensions);
+      vector[slot] = vector[slot] + 1.0;
+    }
+    var length = 0.0;
+    foreach (var v in vector) { length = length + v * v; }
+    if (length == 0.0) {
+      // A text with no word that counts still needs a vector — one slot, the same for every such text.
+      vector[0] = 1.0;
+      return vector;
+    }
+    var scale = 1.0 / Math.Sqrt(length);
+    List<double> unit = [];
+    foreach (var v in vector) { unit.Add(v * scale); }
+    return unit;
+  }
+
+  /// The words of `text` that count, lower-cased, in order (a word may appear more than once).
+  public List<string> WordsOf(string text) {
+    List<string> words = [];
+    var word = "";
+    foreach (var c in (text ?? "").ToLower() + " ") {
+      if (char.IsLetterOrDigit(c)) { word = word + c; continue; }
+      if (word.Length >= MinLength && !Ignore.Contains(word)) { words.Add(word); }
+      word = "";
+    }
+    return words;
+  }
+
+  /// The slot of `dimensions` a word adds to — a hash of its spelling, the same everywhere.
+  public int SlotOf(string word, int dimensions) {
+    long hash = 17;
+    foreach (var c in word) { hash = (hash * 31 + (int)c) % 1000000007; }
+    return (int)(hash % dimensions);
+  }
+}
