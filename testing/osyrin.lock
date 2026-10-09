@@ -6,8 +6,8 @@
     {
       "name": "Osysharp.Memory",
       "kind": "package",
-      "version": "1.0.0",
-      "hash": "sha256:51d3b9a3921ce28952245f6fff3fcb9d4c12dee368cb1b9eedc57c5de2e4825f",
+      "version": "1.0.1",
+      "hash": "sha256:90fbdb0f04af2cb4b9893812d4f2d188f5fdc4ef9aa690e0514c2a141ee05618",
       "minPlatform": "0.9.0",
       "shadow": "app-forkable",
       "source": "workspace:Platform.Core/Dsl/OsySharp/Baseline/Capabilities/Memory"
