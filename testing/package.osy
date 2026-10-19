@@ -9,8 +9,8 @@
 // team may). It is free, offline and the same on every machine, and a test run is the only place it is ever used: the
 // platform takes `TestEmbedder.Use` only in a [Test] or [TestFixture], on a test run.
 package Osysharp.Memory.Testing {
-  version     "0.1.1";
-  minPlatform "0.9.0";
+  version     "0.2.0";
+  minPlatform "0.14.0";
   summary     "a deterministic, offline embedder for tests — a hashed bag of words — so a suite can assert what Memory.Search and [Searchable(Memory)] find without a model.";
   model "model/*.osy";
   use Osysharp.Memory;
