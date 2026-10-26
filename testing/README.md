@@ -49,3 +49,63 @@ assert which rows are found, in which order, and which never are.
 
 A note found by its words, the closest first, a private note never found by anyone but its keeper, a note written in
 the test found at once, and the same text always the same vector.
+
+## Examples
+
+Taken from this package's own tests, which compile and run on every release.
+
+```osy
+using Osysharp.Memory;
+using Osysharp.Memory.Testing;
+
+[Test(Garden)]
+void a_note_is_found_by_the_words_it_holds() {
+  runas (Ann) {
+    var hits = FindNotes("tomatoes split after rain");
+    Assert.Equal("Tomatoes", hits[0].Title);
+  }
+}
+```
+
+From [`tests/embedder.test.osy`](tests/embedder.test.osy).
+
+```osy
+using Osysharp.Memory;
+using Osysharp.Memory.Testing;
+
+[Test(Garden)]
+void the_closest_note_comes_first() {
+  runas (Ann) {
+    var hits = FindNotes("prune climbing roses winter bud");
+    Assert.Equal("Roses", hits[0].Title);
+    Assert.True(hits.All(h => h.Title != "Tomatoes" || h.Score < hits[0].Score));
+  }
+}
+```
+
+From [`tests/embedder.test.osy`](tests/embedder.test.osy).
+
+```osy
+using Osysharp.Memory;
+using Osysharp.Memory.Testing;
+
+[Test(Garden)]
+void a_note_the_searcher_may_not_read_is_never_found() {
+  runas (Ann) { Assert.Equal(0, FindNotes("compost heap smells ammonia dry leaves").Count(h => h.Title == "Bo's compost")); }
+  // The control: its keeper finds it with the same words.
+  runas (Bo) { Assert.Equal("Bo's compost", FindNotes("compost heap smells ammonia dry leaves")[0].Title); }
+}
+```
+
+From [`tests/embedder.test.osy`](tests/embedder.test.osy).
+
+## Learn more
+
+- [The Osysharp.Memory.Testing reference](https://osysharp.com/reference/testing/test-embedder/)
+- [Osysharp.Memory.Testing in the package catalogue](https://osysharp.com/packages/#osysharp-memory-testing)
+- [The Osy# reference](https://osysharp.com/reference/) — the language, the runtime and every kit
+- [`llms-full.txt`](https://osysharp.com/llms-full.txt) — the whole reference and specification as one Markdown file, for a coding agent
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE).
