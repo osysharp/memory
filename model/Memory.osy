@@ -1,0 +1,86 @@
+// `Memory.` — the verbs an app writes.
+namespace Osysharp.Memory;
+
+public class Memory {
+  /// What this app remembers that answers `query`, best first — only memory the caller may read. `about:` narrows to
+  /// memory about these rows, `related:` follows stated links out from them (0 to 3 hops, marked with `Via`), `of:` to
+  /// these entity types, `by:` to memory these principals authored, `kinds:`/`origin:` to these kinds of memory, and
+  /// `keyword:` adds a word for the lexical arm. Each hit carries its citation, its record's name and its record's links.
+  public static List<SearchHit> Search(string query, Entity[]? about = null, int limit = 20, double threshold = 0.5,
+      string? keyword = null, List<string>? of = null, Entity[]? by = null, List<MemoryKind>? kinds = null,
+      MemoryOrigin? origin = null, int related = 0) {
+    return SearchMemory(query, about, limit, threshold, keyword, of, by, kinds, origin, related);
+  }
+
+  /// The same search with a `decimal` threshold — the stdlib verb took any number, and `decimal` and `double` never
+  /// convert into each other, so an app that passed one keeps compiling. Positional `about`/`limit` keep the two
+  /// overloads from ever both fitting one call.
+  public static List<SearchHit> Search(string query, Entity[]? about, int limit, decimal threshold,
+      string? keyword = null, List<string>? of = null, Entity[]? by = null, List<MemoryKind>? kinds = null,
+      MemoryOrigin? origin = null, int related = 0) {
+    return SearchMemory(query, about, limit, (double)threshold, keyword, of, by, kinds, origin, related);
+  }
+
+  /// State that `a` and `b` are related, and why, in the app's own words — read from `a`'s side (`label`, `reason`) and
+  /// from `b`'s (`reverseLabel`, `reverseReason`). The signed-in principal is its author. Search shows the words on every
+  /// hit about either record, and follows the link when asked to (`related:`).
+  public static bool Link(Entity a, Entity b, LinkKind @as = LinkKind.CrossReference, string? label = null,
+      string? reason = null, string? reverseLabel = null, string? reverseReason = null) {
+    StateLink(a, b, @as, label, reason, reverseLabel, reverseReason);
+    return true;
+  }
+
+  /// Withdraw the links between `a` and `b`, whichever way they were stated. How many were removed.
+  public static int Unlink(Entity a, Entity b) {
+    return WithdrawLinks(a, b);
+  }
+
+  /// Put `file`'s text into memory about `about`, authored by whoever is signed in. True when it is queued: indexing a
+  /// file (extract, chunk, embed) happens after the call. Remembering it again replaces what it said before.
+  public static bool Remember(Entity file, Entity about) {
+    // Said here, in the verb's own name — the store refuses an anonymous index too, but in the primitive's.
+    if (Security.CurrentUserId == null) {
+      throw new InvalidOperationException("Memory.Remember records WHO chose to remember the file, and this call has no "
+        + "authenticated principal. Call it from an authenticated context (in a test, `runas (SomePrincipal)`).");
+    }
+    return VectorStore.IndexFile(file, about);
+  }
+
+  /// Take `file`'s text back out of memory. The file itself stays. How many memory entries were removed.
+  public static int Forget(Entity file) {
+    return VectorStore.ForgetFile(file);
+  }
+
+  /// What this app's memory costs, and what a `Prune` at `unusedSince` would free — counted with the prune's own rule.
+  /// The app's memory operator only.
+  public static MemoryStatistics Statistics(DateTime unusedSince) {
+    RequireMemoryOperator("Memory.Statistics");
+    return VectorStore.Statistics(unusedSince);
+  }
+
+  /// Drop the search vector from derived memory nothing has returned since `unusedSince`. The text stays, and memory
+  /// somebody chose to keep is never touched. How many entries lost their vector. The app's memory operator only.
+  public static int Prune(DateTime unusedSince) {
+    RequireMemoryOperator("Memory.Prune");
+    return VectorStore.DropUnusedVectors(unusedSince);
+  }
+}
+
+/// SECURITY-INVARIANT(memory-operator-gate): `Memory.Statistics` and `Memory.Prune` run only for a principal the app's
+/// declared operator policy admits (`app.Memory = new MemoryConfig { Operator = IsOperator }`). No declaration means
+/// NOBODY — a prune is destructive, so the failure direction is not a matter of taste — and the authority is asked
+/// before the cutoff is even read, so a caller who may not prune cannot tell a valid cutoff from an invalid one by the
+/// error. The store's own count and prune are private to this package (`VectorStore.*`), so this is the only door.
+/// Guarded by tests/operator.test.osy.
+void RequireMemoryOperator(string verb) {
+  var config = MemoryConfig.FirstOrDefault();
+  var policy = config == null ? null : config.Operator;
+  if (policy == null || policy.Trim() == "") {
+    throw new NotAuthorized($"`{verb}` is reserved for this app's memory operator (this app has not declared "
+      + "`app.Memory = new MemoryConfig { Operator = <policy> }`, so it has not authorized anyone to manage its memory).");
+  }
+  if (!Security.Check(policy)) {
+    throw new NotAuthorized($"`{verb}` is reserved for this app's memory operator — the `{policy}` policy does not admit "
+      + "the current principal.");
+  }
+}

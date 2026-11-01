@@ -1,0 +1,49 @@
+// Osysharp.Memory — SECURITY-INVARIANT(memory-operator-gate): only the app's declared memory operator may count or prune
+// its memory. Ported from MemoryUsageAndPruningTests; "no operator declared refuses everyone" is proved there too, where
+// the declaration can be taken away under a compiled app (an app that calls Memory.Prune without one does not compile).
+using Osysharp.Memory;
+
+[TestFixture]
+void Gate() {
+  var ops = new Clerk { Email = "ops@desk.test" };
+  var bo = new Clerk { Email = "bo@desk.test" };
+  new DeskGrant { Grantee = ops, Level = DeskRole.Operator };
+  new DeskGrant { Grantee = bo, Level = DeskRole.Clerk };
+  new Deal { Title = "Q1 deal", Notes = "the loading bay closes at six and deliveries must beat it" };
+}
+
+principal Ops => Clerk.Single(c => c.Email == "ops@desk.test");
+principal Bo => Clerk.Single(c => c.Email == "bo@desk.test");
+
+[Test(Gate)]
+[runas(Ops)]
+void the_operator_may_read_what_memory_costs() {
+  var usage = MemoryUsage(90);
+  Assert.True(usage.Authored <= usage.Entries);
+  Assert.True(usage.Reclaimable <= usage.Derived);
+}
+
+[Test(Gate)]
+[runas(Ops)]
+void the_operator_may_prune_and_the_preview_is_what_the_prune_frees() {
+  var promised = MemoryUsage(-1).Reclaimable;
+  Assert.Equal(promised, PruneMemory(-1));
+  Assert.Equal(0, MemoryUsage(-1).Reclaimable);
+}
+
+[Test(Gate)]
+[runas(Bo)]
+void a_clerk_may_not_read_what_memory_costs() {
+  Assert.Throws<NotAuthorized>(() => MemoryUsage(90));
+}
+
+[Test(Gate)]
+[runas(Bo)]
+void a_clerk_may_not_prune() {
+  Assert.Throws<NotAuthorized>(() => PruneMemory(90));
+}
+
+[Test(Gate)]
+void nobody_signed_in_may_prune() {
+  Assert.Throws<NotAuthorized>(() => PruneMemory(90));
+}

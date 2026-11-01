@@ -1,0 +1,8 @@
+// The producer's test project for Osysharp.Memory — a sales desk that relates its deals, keeps the files sent with
+// them, and has one clerk who may look at what its memory costs.
+app SalesDesk {
+  model "model/**/*.osy";
+  tests "**/*.test.osy";
+  use Osysharp.Memory;
+  use Osysharp.Storage;
+}

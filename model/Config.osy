@@ -1,0 +1,20 @@
+// What the app declares about its memory — `app.Memory = new MemoryConfig { … }`.
+namespace Osysharp.Memory;
+
+/// What THIS app's identifiers look like, and who may manage its memory —
+/// `app.Memory = new MemoryConfig { Identifiers = [ @"ORD-\d{6}" ], Operator = IsOperator }`. Written by the compile from
+/// that declaration, one row, never by code.
+internal sealed entity MemoryConfig {
+  /// The patterns, as declared. One regex per line, in declaration order.
+  string Identifiers;
+
+  /// WHO MAY MANAGE THIS APP'S MEMORY — the name of the `policy` that gates `Memory.Statistics` and
+  /// `Memory.Prune`. Declared once: `app.Memory = new MemoryConfig { Operator = IsOperator }`.
+  string? Operator;
+
+  security {
+    // What the app declared is no secret from its own code: the kit reads the operator's policy name to ask it, and a
+    // search reads the identifier patterns. Nothing but the compile writes it.
+    allow read;
+  }
+}

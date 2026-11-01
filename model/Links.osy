@@ -1,0 +1,97 @@
+// A stated relationship between any two records — the row `Memory.Link` writes and `Memory.Unlink` removes.
+namespace Osysharp.Memory;
+
+/// A stated relationship between any two entity instances — "this deal supersedes that one".
+[Index(SourceId)]
+[Index(TargetId)]
+[Index(SourceId, Kind)]
+[Index(TargetId, Kind)]
+internal sealed entity Link {
+  [CreatedAt] DateTime? CreatedAt;
+  [ModifiedAt] DateTime? ModifiedAt;
+  /// EntityMetadata ID of the source entity type
+  Guid SourceTypeId;
+  /// The source entity instance ID
+  Guid SourceId;
+  /// EntityMetadata ID of the target entity type
+  Guid TargetTypeId;
+  /// The target entity instance ID
+  Guid TargetId;
+  /// Short display label read SOURCE→TARGET, e.g. "supersedes".
+  [MaxLength(500)] string? ForwardLabel;
+  /// Why this link exists, stated from the SOURCE's side: "renegotiated after the Q2 review".
+  string? ForwardReason;
+  /// The same link read TARGET→SOURCE, e.g. "superseded by". Falls back to the forward text when absent, which is
+  /// right for a symmetric kind (`CrossReference`) and wrong for every asymmetric one.
+  [MaxLength(500)] string? ReverseLabel;
+  /// Why this link exists, stated from the TARGET's side: "superseded by the Q3 deal at better terms".
+  string? ReverseReason;
+  /// What kind of link this is
+  LinkKind Kind;
+  /// What the location detail addresses, when the link points INTO something — a page, a section, a message.
+  /// Null for the ordinary case: a link between two rows is about the rows, not a place inside them.
+  LinkLocationType? LocationType;
+  /// Type-specific: { page: 12 }, { section: '3.2' }, { messageId: '...' }. Null when the link addresses no
+  /// location.
+  Json? LocationDetail;
+  /// Classification level name inherited from cited source (null = unclassified)
+  [MaxLength(100)] string? DataClassification;
+  /// WHO stated this link — the app-`[Principal]` that asserted the two records are related, matched to the app's
+  /// own principal entity at runtime (the baseline ships no `[Principal]`, so there is no type to FK).
+  [Required] Guid Principal;
+
+  security {
+    // Links are read by the memory verbs alone (`Link` is internal, so no app code names it), and what a reader is shown
+    // of one is filtered by whether they may read the record at its other end.
+    // ⚠ No `when` here: an internal kit entity's rule cannot carry a predicate (EMIT_ERROR, measured). Who may write is
+    //   said instead on the only two functions that can — `[Authorize(IsAuthenticated)]` on each.
+    allow read, create, delete;
+    // SECURITY-INVARIANT(memory-link-author-is-the-session-principal): a link is written only by `StateLink`, which
+    // takes its author from the session and never from an argument, so nobody can state a link in another's name; and
+    // a link is a claim once made — withdrawn, never re-worded or re-pointed. Guarded by
+    // MemoryLinkReasonTests.ALinkIsONERowCarryingBothSidesAndItsAuthor (it reads the row the kit wrote).
+    deny create except via StateLink;
+    deny delete except via WithdrawLinks;
+    deny update;
+  }
+}
+
+/// State a link from `a` to `b` — what `Memory.Link` does. Refused for a row linked to itself, and with nobody signed in.
+[Authorize(IsAuthenticated)]
+Link StateLink(Entity a, Entity b, LinkKind kind, string? label, string? reason, string? reverseLabel, string? reverseReason) {
+  if (a == null || b == null) {
+    throw new ArgumentException("Memory.Link needs the two rows to relate, e.g. `Memory.Link(dealA, dealB)`.");
+  }
+  if (a.Id == b.Id && Records.Type(a) == Records.Type(b)) {
+    throw new ArgumentException("Memory.Link: a row cannot be linked to itself.");
+  }
+  // The acting principal AUTHORS the link: a stated relationship is somebody's claim, and anonymous is a refusal.
+  var author = Security.CurrentUserId;
+  if (author == null) {
+    throw new InvalidOperationException("Memory.Link records WHO stated the link, and this call has no authenticated "
+      + "principal. Call it from an authenticated context (in a test, `runas (SomePrincipal)`).");
+  }
+  return new Link {
+    SourceTypeId = Records.TypeId(a), SourceId = a.Id,
+    TargetTypeId = Records.TypeId(b), TargetId = b.Id,
+    Kind = kind,
+    ForwardLabel = Words(label), ForwardReason = Words(reason),
+    ReverseLabel = Words(reverseLabel), ReverseReason = Words(reverseReason),
+    Principal = author.Value,
+  };
+}
+
+/// Withdraw every link between `a` and `b`, in either direction — what `Memory.Unlink` does. How many were removed.
+[Authorize(IsAuthenticated)]
+int WithdrawLinks(Entity a, Entity b) {
+  if (a == null || b == null) {
+    throw new ArgumentException("Memory.Unlink needs the two rows, e.g. `Memory.Unlink(dealA, dealB)`.");
+  }
+  // Either direction: `Unlink(a, b)` and `Unlink(b, a)` name the same link — which end was the source is storage.
+  var links = Link.Where(l => (l.SourceId == a.Id && l.TargetId == b.Id) || (l.SourceId == b.Id && l.TargetId == a.Id)).ToList();
+  foreach (var l in links) { l.Delete(); }
+  return links.Count;
+}
+
+/// Empty words are no words: a link stated with "" reads as one stated with nothing.
+string? Words(string? text) { return text == null || text.Trim() == "" ? null : text; }

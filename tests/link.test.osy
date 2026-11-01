@@ -1,0 +1,45 @@
+// Osysharp.Memory — stating that two records are related, and withdrawing it. Ported from MemoryLinkReasonTests: the
+// row itself (both sides' words and the author) is asserted there, where a test may read the internal `Link`.
+using Osysharp.Memory;
+
+[TestFixture]
+void Desk() {
+  new Clerk { Email = "ada@desk.test" };
+  new Deal { Title = "Q1 deal", Notes = "the original terms" };
+  new Deal { Title = "Q3 deal", Notes = "the renegotiated terms" };
+}
+
+principal Ada => Clerk.Single(c => c.Email == "ada@desk.test");
+
+[Test(Desk)]
+[runas(Ada)]
+void a_link_is_stated_and_withdrawn_from_either_end() {
+  var q1 = Deal.Single(d => d.Title == "Q1 deal");
+  var q3 = Deal.Single(d => d.Title == "Q3 deal");
+  Assert.True(Supersede(q1, q3));
+  UnitOfWork.Commit();
+  // Which end was the source is storage: named the other way round, it is the same link.
+  Assert.Equal(1, Unrelate(q3, q1));
+  UnitOfWork.Commit();
+  Assert.Equal(0, Unrelate(q1, q3));
+}
+
+[Test(Desk)]
+[runas(Ada)]
+void a_deal_is_not_linked_to_itself() {
+  var q1 = Deal.Single(d => d.Title == "Q1 deal");
+  Assert.Throws<ArgumentException>(() => RelateToItself(q1));
+}
+
+[Test(Desk)]
+void nobody_signed_in_states_no_link() {
+  // SECURITY-INVARIANT(memory-link-author-is-the-session-principal): a link is somebody's claim, and anonymous is a
+  // refusal — not a link stated by nobody.
+  Deal? q1 = null;
+  Deal? q3 = null;
+  runas (Ada) {
+    q1 = Deal.Single(d => d.Title == "Q1 deal");
+    q3 = Deal.Single(d => d.Title == "Q3 deal");
+  }
+  Assert.Denied(() => Supersede(q1, q3));
+}

@@ -1,0 +1,34 @@
+// Osysharp.Memory — a file is in memory because somebody chose it. Ported from MemoryRememberFileTests: the queue and
+// the worker that writes the chunks are driven there; here, what an app's own call can see.
+using Osysharp.Memory;
+using Osysharp.Storage;
+
+[TestFixture]
+void Files() {
+  new Clerk { Email = "ada@desk.test" };
+  new Deal { Title = "Q1 deal", Notes = "the original terms" };
+}
+
+[Test(Files)]
+[runas(Ada)]
+void a_file_never_remembered_has_nothing_to_forget() {
+  var terms = new FileAsset { Name = "terms.txt", MimeType = "text/plain" };
+  UnitOfWork.Commit();
+  Assert.Equal(0, Drop(terms));
+  // Forgetting is about recall, not storage: the file is still there.
+  Assert.Equal(1, FileAsset.Count(f => f.Name == "terms.txt"));
+}
+
+[Test(Files)]
+void nobody_signed_in_remembers_nothing() {
+  // A remembered file's chunks are Authored, so they need an author — anonymous is refused, with the reason.
+  FileAsset? terms = null;
+  Deal? q1 = null;
+  runas (Ada) {
+    // Public, so the anonymous call reaches the verb rather than being refused the file.
+    terms = new FileAsset { Name = "terms.txt", MimeType = "text/plain", IsPublic = true };
+    UnitOfWork.Commit();
+    q1 = Deal.Single(d => d.Title == "Q1 deal");
+  }
+  Assert.Throws<InvalidOperationException>(() => Keep(terms, q1));
+}

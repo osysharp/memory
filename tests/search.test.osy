@@ -1,0 +1,172 @@
+// Osysharp.Memory — what a hit says on top of its text: its record's name, what that record is linked to, and the links it
+// was reached by. Ported from MemoryLinkAnnotationTests and MemoryRelatedHopTests (the citation's range checks stay in
+// MemoryCitationTests, where a test may write a row's metadata). No embedder: the search runs lexical only, and a
+// threshold of 2.0 lets every lexical hit through, so what is asserted is what the kit adds, not the ranking.
+using Osysharp.Memory;
+
+[TestFixture]
+void Pipeline() {
+  new Clerk { Email = "ada@desk.test" };
+  new Clerk { Email = "bo@desk.test" };
+  new Deal { Title = "Q1 deal", Notes = "the original pricing terms for the harbour cranes" };
+  new Deal { Title = "Q3 deal", Notes = "the renegotiated pricing terms for the harbour cranes" };
+  new Deal { Title = "Q4 deal", Notes = "a forecast of spare parts for the dock winches" };
+}
+
+principal Ada => Clerk.Single(c => c.Email == "ada@desk.test");
+principal Bo => Clerk.Single(c => c.Email == "bo@desk.test");
+
+Deal DealTitled(string title) { return Deal.Single(d => d.Title == title); }
+
+SearchHit HitFor(List<SearchHit> hits, Deal d) { return hits.Single(h => h.SourceEntityId == d.Id); }
+
+[Test(Pipeline)]
+[runas(Ada)]
+void a_hit_names_its_record() {
+  var hits = Memory.Search("renegotiated pricing terms", threshold: 2.0);
+  Assert.Equal("Deal Q3 deal", HitFor(hits, DealTitled("Q3 deal")).SourceLabel);
+}
+
+[Test(Pipeline)]
+[runas(Ada)]
+void a_hit_shows_its_links_from_its_own_side() {
+  var q1 = DealTitled("Q1 deal");
+  var q3 = DealTitled("Q3 deal");
+  Supersede(q1, q3);
+  UnitOfWork.Commit();
+  var hits = Memory.Search("pricing terms harbour cranes", threshold: 2.0);
+
+  var older = HitFor(hits, q1).Links[0];
+  Assert.Equal("superseded by", older.Label);
+  Assert.Equal("renegotiated after the Q2 review", older.Reason);
+  Assert.Equal(q3.Id, older.TargetId);
+  Assert.Equal("Deal Q3 deal", older.TargetLabel);
+  // The other end reads the words stated from its side.
+  var newer = HitFor(hits, q3).Links[0];
+  Assert.Equal("supersedes", newer.Label);
+  Assert.Equal(q1.Id, newer.TargetId);
+  Assert.Null(HitFor(hits, q1).LinksElided);
+}
+
+[Test(Pipeline)]
+void a_link_to_a_row_the_reader_may_not_read_is_absent_and_not_counted() {
+  // SECURITY-INVARIANT(link-annotation-shows-only-readable-targets).
+  runas (Bo) {
+    var memo = new Memo { Title = "Bo's numbers", Notes = "the floor price Bo will not go under", Owner = Bo };
+    UnitOfWork.Commit();
+    NoteFrom(DealTitled("Q1 deal"), memo);
+    UnitOfWork.Commit();
+  }
+  runas (Ada) {
+    var hit = HitFor(Memory.Search("original pricing terms", threshold: 2.0), DealTitled("Q1 deal"));
+    Assert.True(hit.Links == null || hit.Links.Count(l => l.TargetType == "Memo") == 0);
+    Assert.Null(hit.LinksElided);
+  }
+  // The control: the memo's owner is shown the link, with its words.
+  runas (Bo) {
+    var hit = HitFor(Memory.Search("original pricing terms", threshold: 2.0), DealTitled("Q1 deal"));
+    Assert.Equal("drafted from", hit.Links.Single(l => l.TargetType == "Memo").Label);
+  }
+}
+
+[Test(Pipeline)]
+[runas(Ada)]
+void five_links_are_shown_newest_first_and_the_rest_are_counted() {
+  var q1 = DealTitled("Q1 deal");
+  for (var i = 1; i <= 7; i++) {
+    var other = new Deal { Title = $"Follow-up {i}", Notes = $"follow-up number {i}" };
+    UnitOfWork.Commit();
+    Memory.Link(q1, other, label: $"follow-up {i}");
+    UnitOfWork.Commit();
+  }
+  var hit = HitFor(Memory.Search("original pricing terms", threshold: 2.0), q1);
+  Assert.Equal(5, hit.Links.Count);
+  Assert.Equal("follow-up 7", hit.Links[0].Label);
+  Assert.Equal(2, hit.LinksElided);
+}
+
+[Test(Pipeline)]
+[runas(Ada)]
+void related_reaches_the_linked_row_and_says_how() {
+  var q1 = DealTitled("Q1 deal");
+  var q3 = DealTitled("Q3 deal");
+  Supersede(q1, q3);
+  UnitOfWork.Commit();
+  // Without a hop, `about:` keeps the search to the Q1 deal.
+  Assert.Equal(0, Memory.Search("renegotiated pricing terms", about: [q1], threshold: 2.0).Count(h => h.SourceEntityId == q3.Id));
+
+  var hits = Memory.Search("renegotiated pricing terms", about: [q1], threshold: 2.0, related: 1);
+  Assert.Equal("superseded by — renegotiated after the Q2 review", HitFor(hits, q3).Via);
+  // A row named in `about:` was not reached by a link.
+  Assert.Null(HitFor(hits, q1).Via);
+}
+
+[Test(Pipeline)]
+[runas(Ada)]
+void related_reads_a_longer_path_as_a_path() {
+  var q1 = DealTitled("Q1 deal");
+  var q3 = DealTitled("Q3 deal");
+  var q4 = DealTitled("Q4 deal");
+  Supersede(q1, q3);
+  Memory.Link(q3, q4, label: "spares for");
+  UnitOfWork.Commit();
+  Assert.Equal(0, Memory.Search("spare parts dock winches", about: [q1], threshold: 2.0, related: 1).Count(h => h.SourceEntityId == q4.Id));
+  var hits = Memory.Search("spare parts dock winches", about: [q1], threshold: 2.0, related: 2);
+  Assert.Equal("superseded by — renegotiated after the Q2 review → spares for", HitFor(hits, q4).Via);
+}
+
+[Test(Pipeline)]
+void related_never_walks_through_a_row_the_reader_may_not_read() {
+  // SECURITY-INVARIANT(related-hop-needs-both-ends-readable): Q1 → Bo's memo → Q4 is a path only Bo may follow.
+  runas (Bo) {
+    var memo = new Memo { Title = "Bo's numbers", Notes = "the floor price Bo will not go under", Owner = Bo };
+    UnitOfWork.Commit();
+    NoteFrom(DealTitled("Q1 deal"), memo);
+    Relate(memo, DealTitled("Q4 deal"));
+    UnitOfWork.Commit();
+  }
+  runas (Ada) {
+    var hits = Memory.Search("spare parts dock winches", about: [DealTitled("Q1 deal")], threshold: 2.0, related: 2);
+    Assert.Equal(0, hits.Count(h => h.SourceEntityId == DealTitled("Q4 deal").Id));
+  }
+  // The control: its owner reaches the Q4 deal through the memo.
+  runas (Bo) {
+    var hits = Memory.Search("spare parts dock winches", about: [DealTitled("Q1 deal")], threshold: 2.0, related: 2);
+    Assert.Equal("drafted from — the memo's private numbers → same terms as", HitFor(hits, DealTitled("Q4 deal")).Via);
+  }
+}
+
+[Test(Pipeline)]
+[runas(Ada)]
+void related_is_refused_past_three_hops_and_without_about() {
+  var q1 = DealTitled("Q1 deal");
+  Assert.Throws<ArgumentException>(() => Memory.Search("pricing", about: [q1], related: 4));
+  Assert.Throws<ArgumentException>(() => Memory.Search("pricing", related: 1));
+}
+
+[Test(Pipeline)]
+void records_find_answers_only_the_rows_the_caller_may_read() {
+  // SECURITY-INVARIANT(records-find-reads-as-the-caller): what every test above rests on — a row held by value is shown
+  // only once it was read back as the caller.
+  Guid memoId = Guid.Empty;
+  runas (Bo) {
+    var memo = new Memo { Title = "Bo's numbers", Notes = "the floor price Bo will not go under", Owner = Bo };
+    UnitOfWork.Commit();
+    memoId = memo.Id;
+  }
+  var q1 = DealTitled("Q1 deal");
+  var types = new List<string> { "Memo", "Deal", "NoSuchType" };
+  var ids = new List<Guid> { memoId, q1.Id, q1.Id };
+  runas (Ada) {
+    var rows = Records.Find(types, ids);
+    Assert.Equal(1, rows.Count);
+    Assert.Equal(q1.Id, rows[0].Id);
+    Assert.Equal("Deal", Records.TypeName(Records.TypeId(rows[0])));
+  }
+  // The control, in the order given: the memo's owner reads it.
+  runas (Bo) {
+    var rows = Records.Find(types, ids);
+    Assert.Equal(2, rows.Count);
+    Assert.Equal(memoId, rows[0].Id);
+  }
+}

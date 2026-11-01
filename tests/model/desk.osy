@@ -1,0 +1,82 @@
+// The desk's model. No `namespace`, because an `app.X = …` statement's value is resolved outside the file's namespace.
+using Osysharp.Memory;
+using Osysharp.Storage;
+
+[Role] enum DeskRole { Clerk, Operator }
+
+/// Who works the desk.
+[Principal]
+entity Clerk {
+  [Required, Unique, MaxLength(200)] string Email;
+  security { allow read when IsAuthenticated; }
+}
+
+[RoleGrant]
+entity DeskGrant {
+  [Required] Clerk Grantee;
+  [Required] DeskRole Level;
+  security { allow read when IsAuthenticated; }
+}
+
+/// One deal, found by what its notes say. Readable by anyone, so a test can hand a deal to a caller nobody signed in as
+/// and see the verb's own refusal rather than the row's.
+entity Deal {
+  semantic => $"Deal {Title}";
+  [Required, MaxLength(120)] string Title;
+  [Searchable(Memory), MaxLength(4000)] string Notes;
+  security {
+    allow read when IsAuthenticated || IsAnonymous;
+    allow create, update when IsAuthenticated;
+  }
+}
+
+/// A clerk's own memo — nobody else may read it, so a link to one is a link a colleague must never be shown.
+entity Memo {
+  semantic => $"Memo {Title}";
+  [Required, MaxLength(120)] string Title;
+  [Searchable(Memory), MaxLength(4000)] string Notes;
+  [Required] Clerk Owner;
+  security {
+    allow read where Owner == user;
+    allow create when IsAuthenticated;
+  }
+}
+
+/// A long agreement with headings, so a hit can say which section it is in and where in the text.
+entity Agreement {
+  semantic => $"Agreement {Ref}";
+  [Required, MaxLength(40)] string Ref;
+  [Searchable(Memory)] string Body;
+  security { allow read, create when IsAuthenticated; }
+}
+
+/// Whoever may look at what the desk's memory costs, and shrink it.
+policy IsOperator => DeskGrant.Any(g => g.Grantee == user && g.Level == DeskRole.Operator);
+app.Memory = new MemoryConfig { Operator = IsOperator };
+
+/// The new deal replaces the old one — said from both sides.
+bool Supersede(Deal older, Deal newer) {
+  return Memory.Link(older, newer, as: LinkKind.Supersedes,
+    label: "superseded by", reason: "renegotiated after the Q2 review",
+    reverseLabel: "supersedes", reverseReason: "replaces the Q1 deal at better terms");
+}
+
+int Unrelate(Deal a, Deal b) { return Memory.Unlink(a, b); }
+
+/// A deal follows from a clerk's memo — the link a colleague who cannot read the memo must never see.
+bool NoteFrom(Deal d, Memo m) {
+  return Memory.Link(d, m, as: LinkKind.DerivedFrom, label: "drafted from", reason: "the memo's private numbers");
+}
+
+/// Two memos that say one thing — a path the search may only follow where its reader may read every row on it.
+bool Relate(Memo a, Deal b) { return Memory.Link(a, b, label: "same terms as"); }
+
+bool RelateToItself(Deal d) { return Memory.Link(d, d, reason: "a deal is not related to itself"); }
+
+bool Keep(FileAsset file, Deal about) { return Memory.Remember(file, about); }
+
+int Drop(FileAsset file) { return Memory.Forget(file); }
+
+MemoryStatistics MemoryUsage(int unusedForDays) { return Memory.Statistics(DateTime.UtcNow.AddDays(-unusedForDays)); }
+
+int PruneMemory(int unusedForDays) { return Memory.Prune(DateTime.UtcNow.AddDays(-unusedForDays)); }

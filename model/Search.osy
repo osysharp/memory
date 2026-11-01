@@ -1,0 +1,321 @@
+// `Memory.Search` — the kit's half of a search (MEM-KIT §2): the platform's `VectorSearch.Search` finds the memory rows the
+// caller may read, and everything a hit says on top of its text is said here — the `related:` hops it reached them by, where
+// in the source the text sits, its record's name, and what that record is linked to.
+//
+// ⚑ READER-SAFE, AND NOT BY TRUST. The rows come from the store's secured search, so a hit the caller may not read never
+//   exists here. What this file adds is WORDS ABOUT OTHER ROWS (a link's reason, a target's label), and each is shown only
+//   after `Records.Find` read the row it is about back through the caller's own security.
+namespace Osysharp.Memory;
+
+/// Where a hit's text sits in its source — read off the matched row's metadata and its passage parent's.
+sealed class Citation {
+  public string? Section;
+  public int? SourceOffset;
+  public int? MatchOffset;
+  public int? MatchLength;
+  public int? PageFrom;
+  public int? PageTo;
+  public string? Document;
+}
+
+/// One memory row's metadata, as the indexer writes it. Every field is optional: absence is ordinary, not a fault.
+sealed class CitedRange {
+  public string? sectionHeader;
+  public int? startOffset;
+  public int? length;
+  public int? pageFrom;
+  public int? pageTo;
+  public string? document;
+}
+
+/// One link read from one end: the row it is shown from, the row at the other end, and the words in that direction.
+sealed class LinkEnd {
+  public string FromType;
+  public Guid FromId;
+  public string ToType;
+  public Guid ToId;
+  public string? Label;
+  public string? Reason;
+  public LinkKind Kind;
+  public DateTime? CreatedAt;
+  public string Words;
+}
+
+/// What a hit's record connects to: at most five links, and how many the cap left out (null when none were).
+sealed class LinkAnnotation {
+  public List<MemoryLink> Links;
+  public int? Elided;
+}
+
+List<SearchHit> SearchMemory(string query, Entity[]? about, int limit, double threshold, string? keyword,
+    List<string>? of, Entity[]? by, List<MemoryKind>? kinds, MemoryOrigin? origin, int related) {
+  if (query == null) {
+    throw new ArgumentException("`Memory.Search` requires a `query` string");
+  }
+  // Bounded, and bounded LOUDLY: each hop multiplies the reachable set, so an unbounded walk makes `about:` mean nothing,
+  // and a clamp would answer a different question in silence.
+  if (related < 0 || related > 3) {
+    throw new ArgumentException($"`Memory.Search` `related:` follows 0 to 3 link hops, not {related}");
+  }
+  // A hop needs somewhere to hop FROM: following links out of the whole corpus reaches everything linked to anything.
+  if (related > 0 && about == null) {
+    throw new ArgumentException("`Memory.Search` `related:` follows links out from `about:` — name the entities to start from");
+  }
+
+  var named = IdsOf(about);
+  // `related:` — the rows reached join `about:`, are not re-scored, and say how they were reached in `Via`. No seeds is not
+  // an error: `about:` may be an empty list, and following links out of nothing is honestly nothing.
+  var via = new Dictionary<Guid, string>();
+  List<Guid>? hops = null;
+  if (related > 0 && named.Count > 0) {
+    var reached = FollowLinks(named, related, via);
+    if (reached.Count > 0) { hops = reached; }
+  }
+
+  var found = VectorSearch.Search(new VectorQuery {
+    Query = query,
+    About = named.Count > 0 ? named : null,
+    Hops = hops,
+    Of = of,
+    By = by == null ? null : IdsOf(by),
+    Kinds = kinds,
+    Origin = origin,
+    Keyword = keyword,
+    Limit = limit,
+    Threshold = (decimal)threshold,
+  });
+
+  // WHICH RECORD, in words — resolved now rather than stored on the row, so a rename never leaves a stale citation.
+  var types = new List<string>();
+  var ids = new List<Guid>();
+  foreach (var h in found) {
+    types.Add(h.SourceEntityType);
+    ids.Add(h.SourceEntityId);
+  }
+  var sources = Records.Find(types, ids);
+  var names = Records.Labels(sources);
+  var labelOf = new Dictionary<Guid, string>();
+  for (var i = 0; i < sources.Count; i++) {
+    if (names[i] != "") { labelOf[sources[i].Id] = names[i]; }
+  }
+
+  var linksOf = Annotate(ids);
+
+  var hits = new List<SearchHit>();
+  foreach (var h in found) {
+    var cited = Cite(h.Metadata, h.ParentMetadata, h.Content.Length);
+    var hit = new SearchHit {
+      Content = h.Content,
+      Score = h.Score,
+      SourceEntityId = h.SourceEntityId,
+      SourceEntityType = h.SourceEntityType,
+      Kind = h.Kind,
+      Distance = h.Distance,
+      // MARKED, not blended: a hit reached by a link says so here and competes on the same distance as the rest.
+      Via = via.ContainsKey(h.SourceEntityId) ? via[h.SourceEntityId] : null,
+      SourceLabel = labelOf.ContainsKey(h.SourceEntityId) ? labelOf[h.SourceEntityId] : null,
+      Section = cited.Section,
+      SourceOffset = cited.SourceOffset,
+      MatchOffset = cited.MatchOffset,
+      MatchLength = cited.MatchLength,
+      PageFrom = cited.PageFrom,
+      PageTo = cited.PageTo,
+      SourceDocument = cited.Document,
+      RememberedAt = h.RememberedAt,
+      Origin = h.Origin,
+      AuthoredBy = h.AuthoredBy,
+    };
+    if (linksOf.ContainsKey(h.SourceEntityId)) {
+      hit.Links = linksOf[h.SourceEntityId].Links;
+      hit.LinksElided = linksOf[h.SourceEntityId].Elided;
+    }
+    hits.Add(hit);
+  }
+  return hits;
+}
+
+/// The ids of these rows, in order — empty for none.
+List<Guid> IdsOf(Entity[]? rows) {
+  var ids = new List<Guid>();
+  if (rows == null) { return ids; }
+  foreach (var r in rows) {
+    if (r != null && !ids.Contains(r.Id)) { ids.Add(r.Id); }
+  }
+  return ids;
+}
+
+/// A link's words in one direction: label and reason joined, or the link's kind when it states neither — an empty `Via`
+/// would read as a third state beside "reached" and "direct hit".
+string Said(string? label, string? reason, LinkKind kind) {
+  var parts = new List<string>();
+  if (label != null && label.Trim() != "") { parts.Add(label); }
+  if (reason != null && reason.Trim() != "") { parts.Add(reason); }
+  return parts.Count > 0 ? string.Join(" — ", parts) : $"{kind}";
+}
+
+/// Every link touching these rows, read from the end that is one of them. DIRECTION DECIDES THE WORDS: arriving at the
+/// target reads forward, arriving at the source reads reverse, and the reverse falls back to the forward when it states
+/// none — right for a symmetric kind, and all a link that stated one side has to offer.
+List<LinkEnd> EndsAt(List<Guid> rows) {
+  var ends = new List<LinkEnd>();
+  if (rows.Count == 0) { return ends; }
+  foreach (var l in Link.Where(l => rows.Contains(l.SourceId) || rows.Contains(l.TargetId)).ToList()) {
+    if (rows.Contains(l.SourceId)) {
+      ends.Add(new LinkEnd {
+        FromType = Records.TypeName(l.SourceTypeId), FromId = l.SourceId, ToType = Records.TypeName(l.TargetTypeId), ToId = l.TargetId,
+        Label = l.ForwardLabel, Reason = l.ForwardReason, Kind = l.Kind, CreatedAt = l.CreatedAt,
+        Words = Said(l.ForwardLabel, l.ForwardReason, l.Kind),
+      });
+    }
+    if (rows.Contains(l.TargetId)) {
+      var label = l.ReverseLabel != null ? l.ReverseLabel : l.ForwardLabel;
+      var reason = l.ReverseReason != null ? l.ReverseReason : l.ForwardReason;
+      ends.Add(new LinkEnd {
+        FromType = Records.TypeName(l.TargetTypeId), FromId = l.TargetId, ToType = Records.TypeName(l.SourceTypeId), ToId = l.SourceId,
+        Label = label, Reason = reason, Kind = l.Kind, CreatedAt = l.CreatedAt,
+        Words = Said(label, reason, l.Kind),
+      });
+    }
+  }
+  return ends;
+}
+
+/// The ids among both ends of these links that the caller may read — one secured read per type.
+List<Guid> ReadableEnds(List<LinkEnd> ends) {
+  var types = new List<string>();
+  var ids = new List<Guid>();
+  foreach (var e in ends) {
+    types.Add(e.FromType);
+    ids.Add(e.FromId);
+    types.Add(e.ToType);
+    ids.Add(e.ToId);
+  }
+  var readable = new List<Guid>();
+  foreach (var r in Records.Find(types, ids)) { readable.Add(r.Id); }
+  return readable;
+}
+
+/// `related:` — breadth-first over `Link` from the seeds: the rows reached, and in `via` the words that reached each.
+///
+/// SECURITY-INVARIANT(related-hop-needs-both-ends-readable): an edge is followed and quoted only when the caller may read
+/// BOTH its ends. The reached row's own memory is gated by its type's read filter, but the link's words describe the
+/// pair, so a caller who cannot read the end they came from would learn about it from the reason at the end they can.
+/// The shortest path wins; several links reaching a row at the same hop are all named; a longer path reads as a path.
+/// Guarded by tests/search.test.osy.
+List<Guid> FollowLinks(List<Guid> seeds, int hops, Dictionary<Guid, string> via) {
+  var reached = new List<Guid>();
+  var seen = new List<Guid>();
+  foreach (var s in seeds) { seen.Add(s); }
+  var frontier = seeds;
+  for (var hop = 0; hop < hops && frontier.Count > 0; hop++) {
+    var ends = EndsAt(frontier);
+    if (ends.Count == 0) { break; }
+    // Naming a row in `about:` is not being allowed to read it, so the near end is checked as well as the far one.
+    var readable = ReadableEnds(ends);
+
+    // Everything new this hop, with every path that reached it — collected before any is written, so two links arriving
+    // at one row at the same depth are both accounted for.
+    var order = new List<Guid>();
+    var arrivals = new Dictionary<Guid, List<string>>();
+    foreach (var e in ends) {
+      if (seen.Contains(e.ToId)) { continue; }
+      if (!readable.Contains(e.FromId) || !readable.Contains(e.ToId)) { continue; }
+      var path = via.ContainsKey(e.FromId) ? via[e.FromId] + " → " + e.Words : e.Words;
+      if (!arrivals.ContainsKey(e.ToId)) {
+        arrivals[e.ToId] = new List<string>();
+        order.Add(e.ToId);
+      }
+      if (!arrivals[e.ToId].Contains(path)) { arrivals[e.ToId].Add(path); }
+    }
+    if (order.Count == 0) { break; }
+
+    frontier = new List<Guid>();
+    foreach (var id in order) {
+      seen.Add(id);
+      reached.Add(id);
+      frontier.Add(id);
+      via[id] = string.Join(" · ", arrivals[id].OrderBy(t => t).ToList());
+    }
+  }
+  return reached;
+}
+
+/// What each of these rows connects to — an annotation on what was found, not a hop: it changes no ranking.
+///
+/// SECURITY-INVARIANT(link-annotation-shows-only-readable-targets): a link whose far end the caller may not read is absent
+/// and is NOT counted in `LinksElided` — the count of what security removed would itself be the disclosure. At most five
+/// per hit, newest first. Guarded by tests/search.test.osy.
+Dictionary<Guid, LinkAnnotation> Annotate(List<Guid> anchors) {
+  var byAnchor = new Dictionary<Guid, LinkAnnotation>();
+  var ends = EndsAt(anchors);
+  if (ends.Count == 0) { return byAnchor; }
+
+  var types = new List<string>();
+  var ids = new List<Guid>();
+  foreach (var e in ends) {
+    types.Add(e.ToType);
+    ids.Add(e.ToId);
+  }
+  var targets = Records.Find(types, ids);
+  var names = Records.Labels(targets);
+  var readable = new List<Guid>();
+  var labelOf = new Dictionary<Guid, string>();
+  for (var i = 0; i < targets.Count; i++) {
+    readable.Add(targets[i].Id);
+    if (names[i] != "") { labelOf[targets[i].Id] = names[i]; }
+  }
+
+  foreach (var anchor in anchors) {
+    if (byAnchor.ContainsKey(anchor)) { continue; }
+    var visible = ends.Where(e => e.FromId == anchor && readable.Contains(e.ToId))
+      .OrderByDescending(e => e.CreatedAt).ToList();
+    if (visible.Count == 0) { continue; }
+    var links = new List<MemoryLink>();
+    foreach (var e in visible.Take(5).ToList()) {
+      links.Add(new MemoryLink {
+        TargetType = e.ToType, TargetId = e.ToId,
+        TargetLabel = labelOf.ContainsKey(e.ToId) ? labelOf[e.ToId] : null,
+        Label = e.Label, Reason = e.Reason, Kind = e.Kind,
+      });
+    }
+    byAnchor[anchor] = new LinkAnnotation { Links = links, Elided = visible.Count > 5 ? visible.Count - 5 : null };
+  }
+  return byAnchor;
+}
+
+/// Where a hit came from. The CHILD is what matched and carries its own range in the source; the PARENT is what is
+/// returned and carries where the answer begins there — so the highlight inside the returned text is their difference.
+Citation Cite(string? childJson, string? parentJson, int contentLength) {
+  var cited = new Citation();
+  var child = RangeOf(childJson);
+  if (child == null) { return cited; }
+  var parent = RangeOf(parentJson);
+  // The ANSWER's position, pages and document are the parent's when there is one, because the parent is what was returned.
+  var answer = parent != null ? parent : child;
+  cited.SourceOffset = answer.startOffset;
+  cited.Section = parent != null && parent.sectionHeader != null ? parent.sectionHeader : child.sectionHeader;
+  cited.PageFrom = answer.pageFrom;
+  cited.PageTo = answer.pageTo;
+  cited.Document = parent != null && parent.document != null ? parent.document : child.document;
+  // The highlight only when match and answer are different rows, and RANGE-CHECKED rather than trusted: a re-chunk or a
+  // restored backup can leave a child describing text the parent no longer holds, and an out-of-range highlight is a
+  // wrong citation, not a smaller one.
+  if (parent != null && child.startOffset != null && parent.startOffset != null && child.length != null) {
+    var relative = child.startOffset.Value - parent.startOffset.Value;
+    if (relative >= 0 && child.length.Value >= 0 && relative + child.length.Value <= contentLength) {
+      cited.MatchOffset = relative;
+      cited.MatchLength = child.length;
+    }
+  }
+  return cited;
+}
+
+/// One row's metadata, or null when it has none or it cannot be read — malformed metadata is a row that cannot say where
+/// it came from, and must never fail the search: the text the caller asked for is already in hand.
+CitedRange? RangeOf(string? json) {
+  if (json == null || json.Trim() == "") { return null; }
+  try {
+    return JsonSerializer.Deserialize<CitedRange>(json);
+  }
+  catch (Exception e) { return null; }
+}

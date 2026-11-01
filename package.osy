@@ -1,0 +1,24 @@
+// Osysharp.Memory — what an app remembers, and how it says so: stated links between its records, files it chose to keep,
+// and the operator's view of what the store costs.
+//
+//     using Osysharp.Memory;
+//
+//     Memory.Link(older, newer, as: LinkKind.Supersedes, reason: "renegotiated after the Q2 review");
+//     Memory.Remember(contract, about: order);
+//     app.Memory = new MemoryConfig { Operator = IsOperator };   // who may run Memory.Statistics and Memory.Prune
+//
+// ⚑ THE STORE IS THE PLATFORM'S, THE VERBS ARE THIS KIT'S (MEM-KIT §2). The vector rows, `[Searchable]`, the secured
+//   search and the prune's safety filter are `Osysharp.Memory.Store`, which this package `use`s; everything here only
+//   reads and writes rows through the caller's own data context, so it is written in Osy#.
+//
+// ⚑ ONE NAMESPACE, TWO PACKAGES. The store declares into `Osysharp.Memory` too, so `using Osysharp.Memory;` names
+//   `MemoryKind` and `IEmbedder` beside this package's types, and every table keeps the name it always had.
+package Osysharp.Memory {
+  version     "2.0.0";
+  minPlatform "0.17.0";
+  summary     "stated links between records, files remembered about a record, and the operator's statistics and prune — the memory verbs over the platform's vector store.";
+
+  model "model/*.osy";
+  tests "tests";
+  use Osysharp.Memory.Store;
+}

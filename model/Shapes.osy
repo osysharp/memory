@@ -1,0 +1,130 @@
+// The shapes the memory verbs answer with, and the words a link is stated in.
+namespace Osysharp.Memory;
+
+public enum LinkKind {
+  Citation,           // 0
+  CrossReference,     // 1
+  DerivedFrom,        // 2
+  Bookmark,           // 3
+  Supersedes,         // 4
+}
+
+public enum LinkLocationType {
+  Page,               // 0
+  Section,            // 1
+  Message,            // 2
+  Property,           // 3
+  Chunk,              // 4
+}
+
+/// What a hit's record CONNECTS to, and why — a readable pointer plus the link's own stated words.
+public sealed class MemoryLink {
+  /// The NAME of the entity type this points at. Without it the id is unusable — a caller cannot load the row,
+  /// group by type, or render a link from an id alone.
+  public string TargetType;
+  /// The row this points at, for a caller with tools to go and look.
+  public Guid TargetId;
+  /// The target's own `semantic` render — the same human name a hit carries in `SourceLabel`. A GUID is not a
+  /// pointer anybody can read.
+  public string? TargetLabel;
+  /// The short label, read in the direction this link is being shown FROM: "supersedes" from the source's end,
+  /// "superseded by" from the target's. A single label cannot be read backwards.
+  public string? Label;
+  /// The link's own words, in that same direction: "renegotiated after the Q2 review".
+  public string? Reason;
+  /// What kind of relationship this is.
+  public LinkKind Kind;
+}
+
+/// What this app's memory COSTS and how much of it is still earning its keep — `Memory.Statistics(before)`.
+public sealed class MemoryStatistics {
+  /// What this app's memory ACTUALLY occupies on disk — its rows, its text, and every index over them.
+  public long? StoredBytes;
+  /// Every memory entry this app holds.
+  public int Entries;
+  /// How many carry a VECTOR — the number that costs money. Text is cheap; a vector is ~3 KB a row and is what
+  /// makes the corpus expensive to store and to search.
+  public int Vectors;
+  /// Roughly what those vectors occupy, in bytes. An estimate of storage, not of a bill: the real figure depends
+  /// on the index the database keeps beside them.
+  public long VectorBytes;
+  /// Memory that FOLLOWS THE DATA — a property's chunks, a document's sections, an entity snapshot. Its text is
+  /// still in the record it came from, so dropping its vector costs a re-embed and nothing else.
+  public int Derived;
+  /// Memory somebody CHOSE to keep — a conversation turn, a remembered file. It exists nowhere else, so pruning
+  /// never touches it. This is the floor: no cutoff, however aggressive, reclaims any of it.
+  public int Authored;
+  /// How many entries no search has ever returned. The strongest single signal that a corpus is carrying weight
+  /// it does not need — though a rare question nobody has asked yet looks exactly the same.
+  public int NeverUsed;
+  /// What a `Memory.Prune` at the cutoff you passed would release, counted with that verb's own filter.
+  public int Reclaimable;
+  /// Roughly how many bytes that would free.
+  public long ReclaimableBytes;
+}
+
+/// One ranked hit from `Memory.Search` — a class (in-memory projection, no table), constructed from the
+/// data the search finds. Exposed to app code by `using Osysharp.Memory;` (the capability rail); it stays
+/// Source=Baseline (referenceable, but never decompiled into app source).
+public sealed class SearchHit {
+  /// The human-readable text that matched
+  public string Content;
+  /// Relevance score (higher = more relevant; RRF-fused when a keyword query is combined)
+  public decimal Score;
+  /// The entity instance this hit came from (a plain value, not a live reference)
+  public Guid SourceEntityId;
+  /// The NAME of the entity type `SourceEntityId` belongs to. Without it the id is unusable: a hit says which row
+  /// it came from but not which table, so a caller cannot load the row, group by type, or render a link.
+  public string SourceEntityType;
+  /// What kind of memory matched — a chunk of a property, a section of a document, a conversation turn. A caller
+  /// building a prompt needs this: a chat turn and a property chunk are different kinds of claim, and one that
+  /// cannot tell them apart presents recalled chatter as fact.
+  public MemoryKind Kind;
+  /// Raw vector distance to the query embedding (lower = closer)
+  public decimal Distance;
+  /// Why this hit is here, when it was reached by following a `related:` link — the link's words, read in the
+  /// direction it was reached from. Null for a direct hit.
+  public string? Via;
+
+  /// WHICH RECORD, in words — the entity's own `semantic` render. `SourceEntityId` and `SourceEntityType` say the
+  /// same thing to a machine; "entity 7f3a…, §Shipping, p.45" is not a citation anybody can read.
+  public string? SourceLabel;
+  /// The heading this text sits under, when the source stated one — the difference between citing a place and
+  /// naming a file. Null when the text carries no headings at all, which is the ordinary case for a short property.
+  public string? Section;
+  /// Where the matched text begins INSIDE `Content` — use it to highlight what matched.
+  public int? MatchOffset;
+  /// How much of `Content` matched, from `MatchOffset`. Null exactly when `MatchOffset` is.
+  public int? MatchLength;
+  /// Where `Content` begins in the SOURCE it was extracted from, so whoever holds the map from character range to
+  /// page, timestamp, slide or line can resolve it. Null for memory that has no source text behind it — a
+  /// conversation turn is not an extract of anything.
+  public int? SourceOffset;
+  /// The first page this text appears on, when the source HAS pages — a PDF, a scan, a deck. Null for text with no
+  /// page structure at all, which is most memory: a property, a note, a conversation turn.
+  public int? PageFrom;
+  /// The last page, when the text straddles a page break — "pages 45-46". Equal to `PageFrom` for text that sits
+  /// on one page, and null exactly when `PageFrom` is.
+  public int? PageTo;
+  /// The DOCUMENT this text was extracted from, when it came from a file — "terms-of-supply.pdf".
+  public string? SourceDocument;
+
+  /// When this was LEARNED — not when the row was written. The axis recency ranks on, and the one an agent needs
+  /// to resolve two memories that disagree: the later one is usually right, and without a date "usually" is
+  /// unusable. Null means nobody recorded when, which is a shape that should not occur.
+  public DateTime? RememberedAt;
+  /// Whether anybody CHOSE to remember this, or it follows the data. `Derived` is a property chunk, a markdown
+  /// section, an entity snapshot — the record itself, restated. `Authored` is a conversation turn, a stated link,
+  /// a file someone decided was worth keeping.
+  public MemoryOrigin Origin;
+  /// WHO authored it, for memory that has an author. Null for `Derived` memory, always and by construction — asking
+  /// who wrote a property chunk is a category error, not a missing value.
+  public Guid? AuthoredBy;
+
+  /// What this hit's record CONNECTS to, and why. See `MemoryLink` — an annotation on what was found, not a hop
+  /// that widens the search.
+  public List<MemoryLink> Links;
+  /// How many links the CAP left out, or null when nothing was capped. A record with two hundred links must not
+  /// empty them into an answer, and a caller that is shown five of two hundred should be told there are more.
+  public int? LinksElided;
+}
