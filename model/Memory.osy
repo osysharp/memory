@@ -21,6 +21,12 @@ public class Memory {
     return SearchMemory(query, about, limit, (double)threshold, keyword, of, by, kinds, origin, related);
   }
 
+  /// Whether `Search` ranks by MEANING here — true when the app has an embedder (its `app.Embedding`, with its key set).
+  /// False means a search runs on words alone (it still answers: see "With no embedder"), which a page says to its reader.
+  public static bool ByMeaning() {
+    return VectorSearch.ByMeaning();
+  }
+
   /// State that `a` and `b` are related, and why, in the app's own words — read from `a`'s side (`label`, `reason`) and
   /// from `b`'s (`reverseLabel`, `reverseReason`). The signed-in principal is its author. Search shows the words on every
   /// hit about either record, and follows the link when asked to (`related:`).

@@ -14,8 +14,8 @@
 // ⚑ ONE NAMESPACE, TWO PACKAGES. The store declares into `Osysharp.Memory` too, so `using Osysharp.Memory;` names
 //   `MemoryKind` and `IEmbedder` beside this package's types, and every table keeps the name it always had.
 package Osysharp.Memory {
-  version     "2.0.0";
-  minPlatform "0.17.0";
+  version     "2.1.0";
+  minPlatform "0.19.0";
   summary     "stated links between records, files remembered about a record, and the operator's statistics and prune — the memory verbs over the platform's vector store.";
 
   model "model/*.osy";

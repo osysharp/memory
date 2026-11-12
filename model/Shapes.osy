@@ -65,7 +65,7 @@ public sealed class MemoryStatistics {
 
 /// One ranked hit from `Memory.Search` — a class (in-memory projection, no table), constructed from the
 /// data the search finds. Exposed to app code by `using Osysharp.Memory;` (the capability rail); it stays
-/// Source=Baseline (referenceable, but never decompiled into app source).
+/// Source=Baseline (referenceable, but never part of app source).
 public sealed class SearchHit {
   /// The human-readable text that matched
   public string Content;
